@@ -143,6 +143,18 @@
   .mastery-bar-fill {
     @apply h-full transition-all duration-700;
   }
+
+  /* Admin form inputs */
+  .admin-input {
+    @apply bg-valo-surface border border-valo-border text-valo-text text-sm font-sans
+           px-3 py-2 outline-none transition-colors
+           placeholder:text-valo-muted
+           focus:border-valo-accent/50 focus:bg-valo-bg;
+    clip-path: polygon(3px 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%, 0 3px);
+  }
+  select.admin-input option {
+    @apply bg-valo-surface text-valo-text;
+  }
 }
 
 @layer utilities {

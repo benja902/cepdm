@@ -5,19 +5,24 @@ import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { Question, OptionKey, Course, Unit, Topic } from "@/lib/types";
+import { Question, OptionKey, Course, Unit, Topic, LearningKit } from "@/lib/types";
 import { COURSE_COLORS, formatTime, masteryLabel } from "@/lib/utils";
+import { validateExplanation, getBlocks } from "@/lib/qualityGate";
 import {
   CheckCircle2,
   XCircle,
   ArrowRight,
   ChevronLeft,
+  ChevronRight,
   Clock,
   AlertTriangle,
   ShieldCheck,
   BookOpen,
   RotateCcw,
   WifiOff,
+  Eye,
+  EyeOff,
+  Layers,
 } from "lucide-react";
 import HudPanel from "@/components/hud/HudPanel";
 
@@ -28,10 +33,12 @@ interface PageData {
   questions: Question[];
   userId: string;
   currentMastery: number;
+  learningKit: LearningKit | null;
 }
 
 const OPTIONS: OptionKey[] = ["A", "B", "C", "D", "E"];
 
+// ─── Error State ────────────────────────────────────────────────────────────
 function ErrorState({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="max-w-xl mx-auto px-6 py-20 text-center">
@@ -56,6 +63,7 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
   );
 }
 
+// ─── Skeleton ───────────────────────────────────────────────────────────────
 function Skeleton() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-4 animate-pulse">
@@ -82,6 +90,231 @@ function Skeleton() {
   );
 }
 
+// ─── Tutor Panel ────────────────────────────────────────────────────────────
+function TutorPanel({
+  question,
+  learningKit,
+  courseSlug,
+  guidedMode,
+  guidedStep,
+  onToggleGuided,
+  onNextStep,
+}: {
+  question: Question;
+  learningKit: LearningKit | null;
+  courseSlug: string;
+  guidedMode: boolean;
+  guidedStep: number;
+  onToggleGuided: () => void;
+  onNextStep: () => void;
+}) {
+  const exp = question.explanation_json;
+  const blocks = getBlocks(exp);
+  const hasBlocks = blocks.length > 0;
+  const useFallback = !hasBlocks;
+
+  const qualityResult = validateExplanation(exp, courseSlug, question.error_common, question.verification);
+
+  const visibleBlocks = guidedMode ? blocks.slice(0, Math.max(1, guidedStep + 1)) : blocks;
+  const allRevealed = !guidedMode || guidedStep >= blocks.length - 1;
+
+  const errorText = question.error_common ?? exp?.error_common ?? exp?.error_comun;
+  const verificationText = question.verification ?? exp?.verification ?? exp?.verificacion;
+
+  return (
+    <div className="space-y-3">
+      {/* Quality Gate badge */}
+      {qualityResult.needsReview && (
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-2 px-3 py-1.5 border border-valo-gold/30 bg-valo-gold/5 font-mono text-xs text-valo-gold"
+          style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}
+        >
+          <AlertTriangle size={11} />
+          REVISIÓN PENDIENTE — {qualityResult.issues.join(" · ")}
+        </motion.div>
+      )}
+
+      <HudPanel className="p-5 space-y-4">
+        {/* Header row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 flex-wrap">
+            <BookOpen size={13} className="text-valo-accent" />
+            <span className="font-mono text-xs text-valo-accent tracking-widest">
+              {useFallback ? "GUÍA DEL TEMA" : "SOLUCIÓN PASO A PASO"}
+            </span>
+            {useFallback && (
+              <span className="font-mono text-xs text-valo-muted">(explicación específica pendiente)</span>
+            )}
+          </div>
+          {!useFallback && blocks.length > 1 && (
+            <button
+              onClick={onToggleGuided}
+              className="flex items-center gap-1.5 px-2.5 py-1 border border-valo-border font-mono text-xs text-valo-muted hover:text-valo-text hover:border-valo-accent/30 transition-all"
+              style={{ clipPath: "polygon(3px 0,100% 0,100% calc(100% - 3px),calc(100% - 3px) 100%,0 100%,0 3px)" }}
+            >
+              {guidedMode ? <Eye size={10} /> : <EyeOff size={10} />}
+              {guidedMode ? "VER TODO" : "GUIADO"}
+            </button>
+          )}
+        </div>
+
+        {/* Content */}
+        {!useFallback ? (
+          <div className="space-y-3">
+            <AnimatePresence>
+              {visibleBlocks.map((block, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.25, delay: guidedMode ? 0 : i * 0.06 }}
+                >
+                  {block.type === "text" ? (
+                    <div className="flex gap-3">
+                      <div
+                        className="flex-shrink-0 w-5 h-5 border border-valo-accent/40 bg-valo-accent/10 flex items-center justify-center font-mono text-xs text-valo-accent mt-0.5"
+                        style={{ clipPath: "polygon(2px 0,100% 0,100% calc(100% - 2px),calc(100% - 2px) 100%,0 100%,0 2px)" }}
+                      >
+                        {i + 1}
+                      </div>
+                      <p className="text-valo-text text-sm leading-relaxed">{block.content}</p>
+                    </div>
+                  ) : (
+                    <div
+                      className="flex gap-3 items-start p-3 border border-valo-accent/20 bg-valo-accent/5"
+                      style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}
+                    >
+                      <div
+                        className="flex-shrink-0 w-5 h-5 border border-valo-accent/40 bg-valo-accent/10 flex items-center justify-center font-mono text-xs text-valo-accent mt-0.5"
+                        style={{ clipPath: "polygon(2px 0,100% 0,100% calc(100% - 2px),calc(100% - 2px) 100%,0 100%,0 2px)" }}
+                      >
+                        {i + 1}
+                      </div>
+                      <code className="font-mono text-sm text-valo-accent break-all">{block.latex}</code>
+                    </div>
+                  )}
+                </motion.div>
+              ))}
+            </AnimatePresence>
+
+            {guidedMode && !allRevealed && (
+              <motion.button
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                onClick={onNextStep}
+                whileHover={{ x: 2 }}
+                className="flex items-center gap-2 px-3 py-1.5 border border-valo-accent/30 bg-valo-accent/10 font-mono text-xs text-valo-accent transition-all"
+                style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}
+              >
+                <ChevronRight size={12} />
+                SIGUIENTE PASO ({guidedStep + 1}/{blocks.length})
+              </motion.button>
+            )}
+          </div>
+        ) : learningKit ? (
+          <div className="space-y-4">
+            {(learningKit.summary_json?.bullets?.length ?? 0) > 0 && (
+              <div>
+                <p className="font-mono text-xs text-valo-muted tracking-widest mb-2">TEORÍA</p>
+                <ul className="space-y-1">
+                  {learningKit.summary_json.bullets.map((b, i) => (
+                    <li key={i} className="flex gap-2 text-sm text-valo-text">
+                      <span className="text-valo-accent mt-0.5 flex-shrink-0">›</span>
+                      {b}
+                    </li>
+                  ))}
+                </ul>
+                {(learningKit.summary_json.notes ?? []).map((n, i) => (
+                  <p key={i} className="text-xs text-valo-muted mt-2 italic">{n}</p>
+                ))}
+              </div>
+            )}
+            {(learningKit.methods_json?.methods?.length ?? 0) > 0 && (
+              <div>
+                <p className="font-mono text-xs text-valo-muted tracking-widest mb-2">MÉTODOS</p>
+                {learningKit.methods_json.methods.map((m, i) => (
+                  <div key={i} className="mb-3">
+                    <p className="text-sm font-semibold text-valo-text mb-1">{m.name}</p>
+                    {m.when_to_use && (
+                      <p className="text-xs text-valo-muted font-mono mb-1">
+                        Cuándo usarlo: {m.when_to_use}
+                      </p>
+                    )}
+                    <ol className="space-y-0.5">
+                      {m.steps.map((step, j) => (
+                        <li key={j} className="flex gap-2 text-sm text-valo-text">
+                          <span className="font-mono text-xs text-valo-muted mt-0.5 flex-shrink-0">{j + 1}.</span>
+                          {step}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-valo-muted text-sm font-mono">Pendiente de solucionario.</p>
+        )}
+
+        {/* Error común */}
+        {(errorText || (useFallback && (learningKit?.common_mistakes_json?.mistakes?.length ?? 0) > 0)) && (
+          <>
+            <div className="hud-divider" />
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={13} className="text-valo-gold flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-mono text-xs text-valo-gold tracking-widest mb-1">ERROR COMÚN</p>
+                {errorText ? (
+                  <p className="text-valo-muted text-sm leading-relaxed">{errorText}</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {learningKit!.common_mistakes_json.mistakes.map((m, i) => (
+                      <div key={i} className="text-sm">
+                        <span className="text-valo-red">{m.mistake}</span>
+                        <span className="text-valo-muted"> → </span>
+                        <span className="text-valo-text">{m.fix}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Verificación */}
+        {(verificationText || (useFallback && (learningKit?.verification_json?.checks?.length ?? 0) > 0)) && (
+          <>
+            <div className="hud-divider" />
+            <div className="flex items-start gap-2">
+              <ShieldCheck size={13} className="text-valo-green flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-mono text-xs text-valo-green tracking-widest mb-1">VERIFICACIÓN</p>
+                {verificationText ? (
+                  <p className="text-valo-muted text-sm leading-relaxed">{verificationText}</p>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {learningKit!.verification_json.checks.map((c, i) => (
+                      <li key={i} className="flex gap-2 text-sm text-valo-text">
+                        <span className="text-valo-green flex-shrink-0">✓</span>
+                        {c}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </HudPanel>
+    </div>
+  );
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────
 export default function PracticeSessionClient() {
   const { topicId } = useParams<{ topicId: string }>();
   const supabase = createClient();
@@ -99,6 +332,10 @@ export default function PracticeSessionClient() {
   const [latestMastery, setLatestMastery] = useState(0);
   const [error, setError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  // Tutor Engine states
+  const [guidedMode, setGuidedMode] = useState(false);
+  const [guidedStep, setGuidedStep] = useState(0);
+  const [practiceLimit, setPracticeLimit] = useState<number | null>(null);
 
   // Load page data
   useEffect(() => {
@@ -112,11 +349,15 @@ export default function PracticeSessionClient() {
         ]);
         if (!user || !topic) return;
 
-        const [{ data: questions }, { data: mastery }] = await Promise.all([
+        const [{ data: questions }, { data: mastery }, { data: kit }] = await Promise.all([
           supabase.from("questions").select("*").eq("topic_id", topicId).order("created_at"),
           supabase.from("mastery")
             .select("mastery_score")
             .eq("user_id", user.id)
+            .eq("topic_id", topicId)
+            .single(),
+          supabase.from("learning_kits")
+            .select("*")
             .eq("topic_id", topicId)
             .single(),
         ]);
@@ -128,6 +369,7 @@ export default function PracticeSessionClient() {
           questions: questions ?? [],
           userId: user.id,
           currentMastery: mastery?.mastery_score ?? 0,
+          learningKit: kit ?? null,
         });
       } catch {
         setError(true);
@@ -140,11 +382,12 @@ export default function PracticeSessionClient() {
   // Shuffle questions once data loads
   useEffect(() => {
     if (!pageData) return;
-    const q = [...pageData.questions].sort(() => Math.random() - 0.5);
+    let q = [...pageData.questions].sort(() => Math.random() - 0.5);
+    if (practiceLimit) q = q.slice(0, practiceLimit);
     setShuffled(q);
     setStartTime(Date.now());
     setLatestMastery(pageData.currentMastery);
-  }, [pageData]);
+  }, [pageData, practiceLimit]);
 
   // Timer
   useEffect(() => {
@@ -162,6 +405,7 @@ export default function PracticeSessionClient() {
       if (revealed || submitting || !pageData) return;
       setSelected(opt);
       setRevealed(true);
+      setGuidedStep(0);
       const elapsed = Date.now() - startTime;
       setElapsedMs(elapsed);
       const isCorrect = opt === currentQ.correct_option;
@@ -189,7 +433,7 @@ export default function PracticeSessionClient() {
           .single();
         if (data) setLatestMastery(data.mastery_score);
       } catch {
-        // silent
+        // silent — attempt saved optimistically in UI
       } finally {
         setSubmitting(false);
       }
@@ -198,6 +442,8 @@ export default function PracticeSessionClient() {
   );
 
   const handleNext = useCallback(() => {
+    setGuidedMode(false);
+    setGuidedStep(0);
     if (currentIdx + 1 >= shuffled.length) {
       setFinished(true);
     } else {
@@ -209,21 +455,26 @@ export default function PracticeSessionClient() {
     }
   }, [currentIdx, shuffled.length]);
 
-  const handleRestart = () => {
+  const handleRestart = (limit?: number) => {
     if (!pageData) return;
-    const q = [...pageData.questions].sort(() => Math.random() - 0.5);
-    setShuffled(q);
+    setPracticeLimit(limit ?? null);
     setCurrentIdx(0);
     setSelected(null);
     setRevealed(false);
+    setGuidedMode(false);
+    setGuidedStep(0);
     setStartTime(Date.now());
     setElapsedMs(0);
     setSessionStats({ correct: 0, total: 0, times: [] });
     setFinished(false);
+    // shuffled will be re-set by the practiceLimit useEffect
+    let q = [...pageData.questions].sort(() => Math.random() - 0.5);
+    if (limit) q = q.slice(0, limit);
+    setShuffled(q);
   };
 
   if (error) return <ErrorState onRetry={() => { setPageData(null); setRetryCount((c) => c + 1); }} />;
-  if (!pageData || !shuffled.length && !pageData.questions.length) return <Skeleton />;
+  if (!pageData || (!shuffled.length && !pageData.questions.length)) return <Skeleton />;
 
   const { topic, unit, course } = pageData;
   const colors = COURSE_COLORS[course?.slug ?? "algebra"] ?? COURSE_COLORS["algebra"];
@@ -296,16 +547,23 @@ export default function PracticeSessionClient() {
               </p>
             </div>
 
-            <div className="flex gap-3 justify-center">
+            <div className="flex gap-3 justify-center flex-wrap">
               <button
-                onClick={handleRestart}
-                className="flex items-center gap-2 px-5 py-2.5 border border-valo-border font-mono text-xs text-valo-muted hover:text-valo-text hover:border-valo-accent/30 transition-all"
+                onClick={() => handleRestart(3)}
+                className="flex items-center gap-2 px-4 py-2.5 border border-valo-border font-mono text-xs text-valo-muted hover:text-valo-text hover:border-valo-accent/30 transition-all"
+                style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}
+              >
+                <Layers size={12} /> 3 SIMILARES
+              </button>
+              <button
+                onClick={() => handleRestart()}
+                className="flex items-center gap-2 px-4 py-2.5 border border-valo-border font-mono text-xs text-valo-muted hover:text-valo-text hover:border-valo-accent/30 transition-all"
                 style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}
               >
                 <RotateCcw size={12} /> REINTENTAR
               </button>
               <Link href={`/app/courses/${course?.slug}`}
-                className="flex items-center gap-2 px-5 py-2.5 bg-valo-accent text-valo-bg font-mono text-xs font-bold hover:bg-valo-accent/90 transition-all"
+                className="flex items-center gap-2 px-4 py-2.5 bg-valo-accent text-valo-bg font-mono text-xs font-bold hover:bg-valo-accent/90 transition-all"
                 style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}>
                 <ArrowRight size={12} /> VER CURSO
               </Link>
@@ -339,6 +597,7 @@ export default function PracticeSessionClient() {
           )}
           <span className="font-mono text-xs text-valo-muted">
             {currentIdx + 1} / {shuffled.length}
+            {practiceLimit && ` (modo ${practiceLimit})`}
           </span>
         </div>
       </div>
@@ -451,7 +710,7 @@ export default function PracticeSessionClient() {
         </motion.div>
       </AnimatePresence>
 
-      {/* Tutor Engine */}
+      {/* Tutor Engine — revealed */}
       <AnimatePresence>
         {revealed && (
           <motion.div
@@ -461,6 +720,7 @@ export default function PracticeSessionClient() {
             transition={{ duration: 0.3 }}
             className="space-y-3"
           >
+            {/* Result feedback bar */}
             <div
               className="px-4 py-3 border font-mono text-sm flex items-center gap-2"
               style={{
@@ -476,59 +736,37 @@ export default function PracticeSessionClient() {
                 : `Incorrecto. La respuesta correcta es (${currentQ.correct_option}).`}
             </div>
 
-            <HudPanel className="p-5 space-y-4">
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <BookOpen size={13} className="text-valo-accent" />
-                  <span className="font-mono text-xs text-valo-accent tracking-widest">EXPLICACIÓN</span>
-                </div>
-                <p className="text-valo-text text-sm leading-relaxed">
-                  {currentQ.explanation_json?.text ?? "Pendiente de solucionario."}
-                </p>
-              </div>
+            {/* Tutor Panel */}
+            <TutorPanel
+              question={currentQ}
+              learningKit={pageData.learningKit}
+              courseSlug={course?.slug ?? ""}
+              guidedMode={guidedMode}
+              guidedStep={guidedStep}
+              onToggleGuided={() => { setGuidedMode((m) => !m); setGuidedStep(0); }}
+              onNextStep={() => setGuidedStep((s) => s + 1)}
+            />
 
-              {currentQ.explanation_json?.error_comun &&
-                currentQ.explanation_json.error_comun !== "Pendiente de solucionario." && (
-                  <div>
-                    <div className="hud-divider mb-3" />
-                    <div className="flex items-start gap-2">
-                      <AlertTriangle size={13} className="text-valo-gold flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-mono text-xs text-valo-gold tracking-widest mb-1">ERROR COMÚN</p>
-                        <p className="text-valo-muted text-sm leading-relaxed">
-                          {currentQ.explanation_json.error_comun}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-              {currentQ.explanation_json?.verificacion &&
-                currentQ.explanation_json.verificacion !== "Pendiente de solucionario." && (
-                  <div>
-                    <div className="hud-divider mb-3" />
-                    <div className="flex items-start gap-2">
-                      <ShieldCheck size={13} className="text-valo-green flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-mono text-xs text-valo-green tracking-widest mb-1">VERIFICACIÓN</p>
-                        <p className="text-valo-muted text-sm leading-relaxed">
-                          {currentQ.explanation_json.verificacion}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-            </HudPanel>
-
+            {/* Session stats + action buttons */}
             <div className="flex items-center justify-between px-1">
-              <span className="font-mono text-xs text-valo-muted">
-                {sessionStats.total > 0 && (
-                  <>
-                    Sesión: {sessionStats.correct}/{sessionStats.total} correctas (
-                    {Math.round((sessionStats.correct / sessionStats.total) * 100)}%)
-                  </>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-xs text-valo-muted">
+                  {sessionStats.total > 0 && (
+                    <>
+                      {sessionStats.correct}/{sessionStats.total} ({Math.round((sessionStats.correct / sessionStats.total) * 100)}%)
+                    </>
+                  )}
+                </span>
+                {pageData.questions.length > 3 && (
+                  <button
+                    onClick={() => handleRestart(3)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-valo-border font-mono text-xs text-valo-muted hover:text-valo-text hover:border-valo-accent/30 transition-all"
+                    style={{ clipPath: "polygon(3px 0,100% 0,100% calc(100% - 3px),calc(100% - 3px) 100%,0 100%,0 3px)" }}
+                  >
+                    <Layers size={11} /> 3 SIMILARES
+                  </button>
                 )}
-              </span>
+              </div>
 
               <motion.button
                 onClick={handleNext}

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -9,7 +10,7 @@ import {
   BookOpen,
   BarChart3,
   LogOut,
-
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,14 @@ export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user?.user_metadata?.role === "admin") setIsAdmin(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -73,6 +82,28 @@ export default function Navbar() {
               </Link>
             );
           })}
+
+          {isAdmin && (
+            <Link
+              href="/app/admin"
+              className={cn(
+                "relative flex items-center gap-2 px-4 py-2 font-mono text-xs tracking-widest transition-all",
+                pathname.startsWith("/app/admin")
+                  ? "text-valo-gold"
+                  : "text-valo-muted hover:text-valo-gold"
+              )}
+            >
+              <Shield size={15} />
+              <span className="hidden md:block">ADMIN</span>
+              {pathname.startsWith("/app/admin") && (
+                <motion.div
+                  layoutId="nav-indicator"
+                  className="absolute bottom-0 left-0 right-0 h-px bg-valo-gold"
+                  transition={{ duration: 0.2 }}
+                />
+              )}
+            </Link>
+          )}
         </nav>
 
         {/* Logout */}
