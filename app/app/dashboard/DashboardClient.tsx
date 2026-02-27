@@ -6,7 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { COURSE_COLORS, COURSE_ICONS } from "@/lib/utils";
 import { Course } from "@/lib/types";
-import { Target, Zap, Trophy, BookOpen, ArrowRight } from "lucide-react";
+import { Target, Zap, Trophy, BookOpen, ArrowRight, WifiOff, RotateCcw } from "lucide-react";
 import HudPanel from "@/components/hud/HudPanel";
 
 interface PageData {
@@ -26,6 +26,30 @@ const statVariants = {
     transition: { delay: i * 0.1, duration: 0.4 },
   }),
 };
+
+function ErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="max-w-xl mx-auto px-6 py-20 text-center">
+      <div
+        className="p-10 border border-valo-red/30 bg-valo-red/5"
+        style={{ clipPath: "polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)" }}
+      >
+        <WifiOff size={32} className="text-valo-red mx-auto mb-4" />
+        <h2 className="text-xl font-bold text-valo-text mb-2">Error al cargar</h2>
+        <p className="text-valo-muted text-sm font-mono mb-6">
+          No se pudo conectar con el servidor. Verifica tu conexión e intenta de nuevo.
+        </p>
+        <button
+          onClick={onRetry}
+          className="inline-flex items-center gap-2 px-4 py-2 border border-valo-border font-mono text-xs text-valo-muted hover:text-valo-text hover:border-valo-red/40 transition-all"
+          style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}
+        >
+          <RotateCcw size={12} /> REINTENTAR
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function Skeleton() {
   return (
@@ -59,50 +83,58 @@ function Skeleton() {
 
 export default function DashboardClient() {
   const [data, setData] = useState<PageData | null>(null);
+  const [error, setError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
+    setError(false);
     async function load() {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
 
-      const [
-        { data: courses },
-        { data: mastery },
-        { data: recentAttempts },
-      ] = await Promise.all([
-        supabase.from("courses").select("*").order("order"),
-        user
-          ? supabase.from("mastery").select("topic_id, mastery_score").eq("user_id", user.id)
-          : Promise.resolve({ data: [] }),
-        user
-          ? supabase.from("attempts")
-              .select("id, is_correct, created_at")
-              .eq("user_id", user.id)
-              .order("created_at", { ascending: false })
-              .limit(10)
-          : Promise.resolve({ data: [] }),
-      ]);
+        const [
+          { data: courses },
+          { data: mastery },
+          { data: recentAttempts },
+        ] = await Promise.all([
+          supabase.from("courses").select("*").order("order"),
+          user
+            ? supabase.from("mastery").select("topic_id, mastery_score").eq("user_id", user.id)
+            : Promise.resolve({ data: [] }),
+          user
+            ? supabase.from("attempts")
+                .select("id, is_correct, created_at")
+                .eq("user_id", user.id)
+                .order("created_at", { ascending: false })
+                .limit(10)
+            : Promise.resolve({ data: [] }),
+        ]);
 
-      const totalAttempts = (recentAttempts ?? []).length;
-      const correctCount = (recentAttempts ?? []).filter((a) => a.is_correct).length;
-      const accuracy = totalAttempts > 0 ? Math.round((correctCount / totalAttempts) * 100) : 0;
-      const masteryArr = mastery ?? [];
-      const avgMastery = masteryArr.length > 0
-        ? Math.round((masteryArr.reduce((s, m) => s + m.mastery_score, 0) / masteryArr.length) * 100)
-        : 0;
+        const totalAttempts = (recentAttempts ?? []).length;
+        const correctCount = (recentAttempts ?? []).filter((a) => a.is_correct).length;
+        const accuracy = totalAttempts > 0 ? Math.round((correctCount / totalAttempts) * 100) : 0;
+        const masteryArr = mastery ?? [];
+        const avgMastery = masteryArr.length > 0
+          ? Math.round((masteryArr.reduce((s, m) => s + m.mastery_score, 0) / masteryArr.length) * 100)
+          : 0;
 
-      setData({
-        email: user?.email ?? "",
-        courses: courses ?? [],
-        totalAttempts,
-        accuracy,
-        avgMastery,
-        masteredTopics: masteryArr.filter((m) => m.mastery_score >= 0.8).length,
-      });
+        setData({
+          email: user?.email ?? "",
+          courses: courses ?? [],
+          totalAttempts,
+          accuracy,
+          avgMastery,
+          masteredTopics: masteryArr.filter((m) => m.mastery_score >= 0.8).length,
+        });
+      } catch {
+        setError(true);
+      }
     }
     load();
-  }, []);
+  }, [retryCount]);
 
+  if (error) return <ErrorState onRetry={() => setRetryCount((c) => c + 1)} />;
   if (!data) return <Skeleton />;
 
   const { email, courses, totalAttempts, accuracy, avgMastery, masteredTopics } = data;

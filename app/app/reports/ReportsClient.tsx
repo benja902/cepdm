@@ -3,11 +3,10 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useState as useFilterState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { COURSE_COLORS, formatTime } from "@/lib/utils";
 import { Course } from "@/lib/types";
-import { BarChart3, Target, Clock, Trophy, ChevronRight } from "lucide-react";
+import { BarChart3, Target, Clock, Trophy, ChevronRight, WifiOff, RotateCcw } from "lucide-react";
 import HudPanel from "@/components/hud/HudPanel";
 
 type TopicStat = {
@@ -28,6 +27,30 @@ interface PageData {
   overallAccuracy: number;
   avgTime: number;
   masteryCount: number;
+}
+
+function ErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="max-w-xl mx-auto px-6 py-20 text-center">
+      <div
+        className="p-10 border border-valo-red/30 bg-valo-red/5"
+        style={{ clipPath: "polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)" }}
+      >
+        <WifiOff size={32} className="text-valo-red mx-auto mb-4" />
+        <h2 className="text-xl font-bold text-valo-text mb-2">Error al cargar</h2>
+        <p className="text-valo-muted text-sm font-mono mb-6">
+          No se pudo conectar con el servidor. Verifica tu conexión e intenta de nuevo.
+        </p>
+        <button
+          onClick={onRetry}
+          className="inline-flex items-center gap-2 px-4 py-2 border border-valo-border font-mono text-xs text-valo-muted hover:text-valo-text hover:border-valo-red/40 transition-all"
+          style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}
+        >
+          <RotateCcw size={12} /> REINTENTAR
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function Skeleton() {
@@ -71,64 +94,72 @@ function Skeleton() {
 
 export default function ReportsClient() {
   const [data, setData] = useState<PageData | null>(null);
-  const [filterCourse, setFilterCourse] = useFilterState<string>("all");
+  const [filterCourse, setFilterCourse] = useState<string>("all");
+  const [error, setError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
+    setError(false);
     async function load() {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
 
-      const [{ data: courses }, { data: attempts }, { data: mastery }] = await Promise.all([
-        supabase.from("courses").select("*").order("order"),
-        supabase.from("attempts")
-          .select("id, is_correct, time_ms, question_id, questions(course_id, unit_id, topic_id, topics(name), units(name), courses(name, slug))")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false }),
-        supabase.from("mastery").select("topic_id, mastery_score").eq("user_id", user.id),
-      ]);
+        const [{ data: courses }, { data: attempts }, { data: mastery }] = await Promise.all([
+          supabase.from("courses").select("*").order("order"),
+          supabase.from("attempts")
+            .select("id, is_correct, time_ms, question_id, questions(course_id, unit_id, topic_id, topics(name), units(name), courses(name, slug))")
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false }),
+          supabase.from("mastery").select("topic_id, mastery_score").eq("user_id", user.id),
+        ]);
 
-      const topicStats: Record<string, TopicStat> = {};
-      for (const a of attempts ?? []) {
-        const q = a.questions as any;
-        if (!q) continue;
-        const tid = q.topic_id;
-        if (!topicStats[tid]) {
-          topicStats[tid] = {
-            name: q.topics?.name ?? "–",
-            unitName: q.units?.name ?? "–",
-            courseName: q.courses?.name ?? "–",
-            courseSlug: q.courses?.slug ?? "",
-            total: 0, correct: 0, totalTime: 0, mastery: 0,
-          };
+        const topicStats: Record<string, TopicStat> = {};
+        for (const a of attempts ?? []) {
+          const q = a.questions as any;
+          if (!q) continue;
+          const tid = q.topic_id;
+          if (!topicStats[tid]) {
+            topicStats[tid] = {
+              name: q.topics?.name ?? "–",
+              unitName: q.units?.name ?? "–",
+              courseName: q.courses?.name ?? "–",
+              courseSlug: q.courses?.slug ?? "",
+              total: 0, correct: 0, totalTime: 0, mastery: 0,
+            };
+          }
+          topicStats[tid].total++;
+          if (a.is_correct) topicStats[tid].correct++;
+          topicStats[tid].totalTime += a.time_ms;
         }
-        topicStats[tid].total++;
-        if (a.is_correct) topicStats[tid].correct++;
-        topicStats[tid].totalTime += a.time_ms;
-      }
-      for (const m of mastery ?? []) {
-        if (topicStats[m.topic_id]) topicStats[m.topic_id].mastery = m.mastery_score;
-      }
+        for (const m of mastery ?? []) {
+          if (topicStats[m.topic_id]) topicStats[m.topic_id].mastery = m.mastery_score;
+        }
 
-      const totalAttempts = (attempts ?? []).length;
-      const totalCorrect = (attempts ?? []).filter((a) => a.is_correct).length;
-      const overallAccuracy = totalAttempts > 0 ? (totalCorrect / totalAttempts) * 100 : 0;
-      const avgTime = totalAttempts > 0
-        ? Math.round((attempts ?? []).reduce((s, a) => s + a.time_ms, 0) / totalAttempts)
-        : 0;
+        const totalAttempts = (attempts ?? []).length;
+        const totalCorrect = (attempts ?? []).filter((a) => a.is_correct).length;
+        const overallAccuracy = totalAttempts > 0 ? (totalCorrect / totalAttempts) * 100 : 0;
+        const avgTime = totalAttempts > 0
+          ? Math.round((attempts ?? []).reduce((s, a) => s + a.time_ms, 0) / totalAttempts)
+          : 0;
 
-      setData({
-        courses: courses ?? [],
-        topicStats,
-        totalAttempts,
-        overallAccuracy,
-        avgTime,
-        masteryCount: (mastery ?? []).filter((m) => m.mastery_score >= 0.8).length,
-      });
+        setData({
+          courses: courses ?? [],
+          topicStats,
+          totalAttempts,
+          overallAccuracy,
+          avgTime,
+          masteryCount: (mastery ?? []).filter((m) => m.mastery_score >= 0.8).length,
+        });
+      } catch {
+        setError(true);
+      }
     }
     load();
-  }, []);
+  }, [retryCount]);
 
+  if (error) return <ErrorState onRetry={() => setRetryCount((c) => c + 1)} />;
   if (!data) return <Skeleton />;
 
   const { courses, topicStats, totalAttempts, overallAccuracy, avgTime, masteryCount } = data;
@@ -137,6 +168,17 @@ export default function ReportsClient() {
     .map(([id, s]) => ({ id, ...s }))
     .filter((t) => filterCourse === "all" || t.courseSlug === filterCourse)
     .sort((a, b) => b.total - a.total);
+
+  // Per-course aggregated stats
+  const courseBreakdown = courses.map((course) => {
+    const topics = Object.values(topicStats).filter((t) => t.courseSlug === course.slug);
+    const total = topics.reduce((s, t) => s + t.total, 0);
+    const correct = topics.reduce((s, t) => s + t.correct, 0);
+    const totalTime = topics.reduce((s, t) => s + t.totalTime, 0);
+    const accuracy = total > 0 ? Math.round((correct / total) * 100) : null;
+    const avgCourseTime = total > 0 ? Math.round(totalTime / total) : 0;
+    return { course, total, accuracy, avgCourseTime };
+  }).filter((c) => c.total > 0);
 
   const summaryStats = [
     { label: "TOTAL INTENTOS", value: totalAttempts, color: "#00d4ff", icon: <BarChart3 size={14} /> },
@@ -174,6 +216,85 @@ export default function ReportsClient() {
           </motion.div>
         ))}
       </div>
+
+      {/* Per-course summary */}
+      {courseBreakdown.length > 0 && (
+        <div>
+          <p className="font-mono text-xs text-valo-muted-2 tracking-widest mb-3">
+            // RESUMEN POR CURSO
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {courseBreakdown.map(({ course, total, accuracy, avgCourseTime }, i) => {
+              const col = COURSE_COLORS[course.slug] ?? COURSE_COLORS["algebra"];
+              return (
+                <motion.div
+                  key={course.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 + i * 0.08 }}
+                >
+                  <button
+                    onClick={() => setFilterCourse(filterCourse === course.slug ? "all" : course.slug)}
+                    className="w-full text-left"
+                  >
+                    <div
+                      className="p-4 border bg-valo-panel transition-all"
+                      style={{
+                        clipPath: "polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)",
+                        borderColor: filterCourse === course.slug ? col.accent : col.border,
+                        backgroundColor: filterCourse === course.slug ? `${col.accent}08` : "#131b24",
+                        boxShadow: filterCourse === course.slug ? `0 0 16px ${col.glow}` : "none",
+                      }}
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="font-bold text-valo-text text-sm">{course.name}</span>
+                        <span className="font-mono text-xs text-valo-muted">{total} intentos</span>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        {accuracy !== null ? (
+                          <div>
+                            <p className="font-mono text-xs text-valo-muted mb-0.5">PRECISIÓN</p>
+                            <p
+                              className="font-mono text-lg font-black"
+                              style={{ color: accuracy >= 70 ? "#39d264" : accuracy >= 50 ? "#f5a623" : "#ff4655" }}
+                            >
+                              {accuracy}%
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="font-mono text-xs text-valo-muted">Sin datos</p>
+                        )}
+                        {avgCourseTime > 0 && (
+                          <div>
+                            <p className="font-mono text-xs text-valo-muted mb-0.5">T.PROM.</p>
+                            <p className="font-mono text-lg font-black text-valo-text">
+                              {formatTime(avgCourseTime)}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      {accuracy !== null && (
+                        <div className="mt-3 mastery-bar w-full">
+                          <motion.div
+                            className="mastery-bar-fill"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${accuracy}%` }}
+                            transition={{ duration: 0.7, delay: 0.3 + i * 0.1 }}
+                            style={{
+                              backgroundColor:
+                                accuracy >= 70 ? "#39d264" : accuracy >= 50 ? "#f5a623" : "#ff4655",
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-mono text-xs text-valo-muted-2 tracking-widest mr-2">FILTRAR:</span>

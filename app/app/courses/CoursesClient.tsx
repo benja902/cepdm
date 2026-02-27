@@ -6,11 +6,35 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { COURSE_COLORS, COURSE_ICONS } from "@/lib/utils";
 import { Course } from "@/lib/types";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, WifiOff, RotateCcw } from "lucide-react";
 
 interface PageData {
   courses: Course[];
   courseStats: Record<string, { total: number; correct: number }>;
+}
+
+function ErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="max-w-xl mx-auto px-6 py-20 text-center">
+      <div
+        className="p-10 border border-valo-red/30 bg-valo-red/5"
+        style={{ clipPath: "polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)" }}
+      >
+        <WifiOff size={32} className="text-valo-red mx-auto mb-4" />
+        <h2 className="text-xl font-bold text-valo-text mb-2">Error al cargar</h2>
+        <p className="text-valo-muted text-sm font-mono mb-6">
+          No se pudo conectar con el servidor. Verifica tu conexión e intenta de nuevo.
+        </p>
+        <button
+          onClick={onRetry}
+          className="inline-flex items-center gap-2 px-4 py-2 border border-valo-border font-mono text-xs text-valo-muted hover:text-valo-text hover:border-valo-red/40 transition-all"
+          style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}
+        >
+          <RotateCcw size={12} /> REINTENTAR
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function Skeleton() {
@@ -38,33 +62,41 @@ function Skeleton() {
 
 export default function CoursesClient() {
   const [data, setData] = useState<PageData | null>(null);
+  const [error, setError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
+    setError(false);
     async function load() {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
 
-      const [{ data: courses }, { data: attempts }] = await Promise.all([
-        supabase.from("courses").select("*").order("order"),
-        user
-          ? supabase.from("attempts").select("is_correct, questions(course_id)").eq("user_id", user.id)
-          : Promise.resolve({ data: [] }),
-      ]);
+        const [{ data: courses }, { data: attempts }] = await Promise.all([
+          supabase.from("courses").select("*").order("order"),
+          user
+            ? supabase.from("attempts").select("is_correct, questions(course_id)").eq("user_id", user.id)
+            : Promise.resolve({ data: [] }),
+        ]);
 
-      const courseStats: Record<string, { total: number; correct: number }> = {};
-      for (const a of attempts ?? []) {
-        const cid = (a.questions as any)?.course_id;
-        if (!cid) continue;
-        if (!courseStats[cid]) courseStats[cid] = { total: 0, correct: 0 };
-        courseStats[cid].total++;
-        if (a.is_correct) courseStats[cid].correct++;
+        const courseStats: Record<string, { total: number; correct: number }> = {};
+        for (const a of attempts ?? []) {
+          const cid = (a.questions as any)?.course_id;
+          if (!cid) continue;
+          if (!courseStats[cid]) courseStats[cid] = { total: 0, correct: 0 };
+          courseStats[cid].total++;
+          if (a.is_correct) courseStats[cid].correct++;
+        }
+
+        setData({ courses: courses ?? [], courseStats });
+      } catch {
+        setError(true);
       }
-
-      setData({ courses: courses ?? [], courseStats });
     }
     load();
-  }, []);
+  }, [retryCount]);
 
+  if (error) return <ErrorState onRetry={() => setRetryCount((c) => c + 1)} />;
   if (!data) return <Skeleton />;
 
   const { courses, courseStats } = data;

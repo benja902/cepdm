@@ -7,7 +7,31 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { COURSE_COLORS, COURSE_ICONS, masteryLabel } from "@/lib/utils";
 import { Course } from "@/lib/types";
-import { ChevronDown, Play } from "lucide-react";
+import { ChevronDown, Play, WifiOff, RotateCcw } from "lucide-react";
+
+function ErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="max-w-xl mx-auto px-6 py-20 text-center">
+      <div
+        className="p-10 border border-valo-red/30 bg-valo-red/5"
+        style={{ clipPath: "polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)" }}
+      >
+        <WifiOff size={32} className="text-valo-red mx-auto mb-4" />
+        <h2 className="text-xl font-bold text-valo-text mb-2">Error al cargar</h2>
+        <p className="text-valo-muted text-sm font-mono mb-6">
+          No se pudo conectar con el servidor. Verifica tu conexión e intenta de nuevo.
+        </p>
+        <button
+          onClick={onRetry}
+          className="inline-flex items-center gap-2 px-4 py-2 border border-valo-border font-mono text-xs text-valo-muted hover:text-valo-text hover:border-valo-red/40 transition-all"
+          style={{ clipPath: "polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px)" }}
+        >
+          <RotateCcw size={12} /> REINTENTAR
+        </button>
+      </div>
+    </div>
+  );
+}
 
 interface PageData {
   course: Course;
@@ -43,52 +67,59 @@ export default function CourseDetailClient() {
   const { courseSlug } = useParams<{ courseSlug: string }>();
   const [data, setData] = useState<PageData | null>(null);
   const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
+  const [error, setError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     if (!courseSlug) return;
+    setError(false);
     async function load() {
-      const supabase = createClient();
+      try {
+        const supabase = createClient();
 
-      const [{ data: { user } }, { data: course }] = await Promise.all([
-        supabase.auth.getUser(),
-        supabase.from("courses").select("*").eq("slug", courseSlug).single(),
-      ]);
+        const [{ data: { user } }, { data: course }] = await Promise.all([
+          supabase.auth.getUser(),
+          supabase.from("courses").select("*").eq("slug", courseSlug).single(),
+        ]);
 
-      if (!course) return;
+        if (!course) return;
 
-      const [{ data: units }, { data: qCounts }] = await Promise.all([
-        supabase.from("units").select("*, topics(*)").eq("course_id", course.id).order("order"),
-        supabase.from("questions").select("topic_id").eq("course_id", course.id),
-      ]);
+        const [{ data: units }, { data: qCounts }] = await Promise.all([
+          supabase.from("units").select("*, topics(*)").eq("course_id", course.id).order("order"),
+          supabase.from("questions").select("topic_id").eq("course_id", course.id),
+        ]);
 
-      const unitsWithSortedTopics = (units ?? []).map((u) => ({
-        ...u,
-        topics: [...(u.topics ?? [])].sort((a: any, b: any) => a.order - b.order),
-      }));
+        const unitsWithSortedTopics = (units ?? []).map((u) => ({
+          ...u,
+          topics: [...(u.topics ?? [])].sort((a: any, b: any) => a.order - b.order),
+        }));
 
-      const masteryMap: Record<string, number> = {};
-      if (user) {
-        const topicIds = unitsWithSortedTopics.flatMap((u) => u.topics.map((t: any) => t.id));
-        if (topicIds.length > 0) {
-          const { data: mastery } = await supabase
-            .from("mastery")
-            .select("topic_id, mastery_score")
-            .eq("user_id", user.id)
-            .in("topic_id", topicIds);
-          for (const m of mastery ?? []) masteryMap[m.topic_id] = m.mastery_score;
+        const masteryMap: Record<string, number> = {};
+        if (user) {
+          const topicIds = unitsWithSortedTopics.flatMap((u) => u.topics.map((t: any) => t.id));
+          if (topicIds.length > 0) {
+            const { data: mastery } = await supabase
+              .from("mastery")
+              .select("topic_id, mastery_score")
+              .eq("user_id", user.id)
+              .in("topic_id", topicIds);
+            for (const m of mastery ?? []) masteryMap[m.topic_id] = m.mastery_score;
+          }
         }
-      }
 
-      const questionCountMap: Record<string, number> = {};
-      for (const q of qCounts ?? []) {
-        questionCountMap[q.topic_id] = (questionCountMap[q.topic_id] ?? 0) + 1;
-      }
+        const questionCountMap: Record<string, number> = {};
+        for (const q of qCounts ?? []) {
+          questionCountMap[q.topic_id] = (questionCountMap[q.topic_id] ?? 0) + 1;
+        }
 
-      setExpandedUnits(new Set(unitsWithSortedTopics.slice(0, 1).map((u) => u.id)));
-      setData({ course, units: unitsWithSortedTopics, masteryMap, questionCountMap });
+        setExpandedUnits(new Set(unitsWithSortedTopics.slice(0, 1).map((u) => u.id)));
+        setData({ course, units: unitsWithSortedTopics, masteryMap, questionCountMap });
+      } catch {
+        setError(true);
+      }
     }
     load();
-  }, [courseSlug]);
+  }, [courseSlug, retryCount]);
 
   const toggleUnit = (unitId: string) => {
     setExpandedUnits((prev) => {
@@ -99,6 +130,7 @@ export default function CourseDetailClient() {
     });
   };
 
+  if (error) return <ErrorState onRetry={() => setRetryCount((c) => c + 1)} />;
   if (!data) return <Skeleton />;
 
   const { course, units, masteryMap, questionCountMap } = data;
